@@ -1,0 +1,127 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CloudFormation template to create a VPC and an EC2 instance with SSH access and S3 permissions
+
+Resources:
+  # Creación de la VPC (Virtual Private Cloud)
+  MyVPC:
+    Type: 'AWS::EC2::VPC' #Proveedor::Servicio::Recurso
+    Properties:
+      CidrBlock: '10.0.0.0/16'  # Rango de direcciones IP para la VPC
+      EnableDnsSupport: true  # Habilita el soporte DNS dentro de la VPC
+      EnableDnsHostnames: true  # Habilita los nombres de host DNS para las instancias en esta VPC
+      Tags:
+        - Key: Name
+          Value: MyVPC  # Etiqueta para identificar la VPC
+
+  # Creación de una Internet Gateway para la VPC
+  MyInternetGateway:
+    Type: 'AWS::EC2::InternetGateway'
+  
+  # Asociar la Internet Gateway con la VPC
+  AttachGateway:
+    Type: 'AWS::EC2::VPCGatewayAttachment'
+    Properties:
+      VpcId: !Ref MyVPC  # Referencia a la VPC creada
+      InternetGatewayId: !Ref MyInternetGateway  # Referencia a la Internet Gateway creada
+
+  # Creación de una Subnet dentro de la VPC
+  MySubnet:
+    Type: 'AWS::EC2::Subnet'
+    Properties:
+      VpcId: !Ref MyVPC  # Referencia a la VPC creada
+      CidrBlock: '10.0.1.0/24'  # Rango de direcciones IP para la Subnet
+      MapPublicIpOnLaunch: true  # Asigna automáticamente una IP pública a las instancias en esta Subnet
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]  # Selección de la zona de disponibilidad (la primera disponible)
+      Tags:
+        - Key: Name
+          Value: MySubnet  # Etiqueta para identificar la Subnet
+
+  # Creación de una tabla de rutas para la VPC
+  MyRouteTable:
+    Type: 'AWS::EC2::RouteTable'
+    Properties:
+      VpcId: !Ref MyVPC  # Referencia a la VPC creada
+
+  # Creación de una ruta en la tabla de rutas para dirigir tráfico a la Internet Gateway
+  MyRoute:
+    Type: 'AWS::EC2::Route'
+    Properties:
+      RouteTableId: !Ref MyRouteTable  # Referencia a la tabla de rutas creada
+      DestinationCidrBlock: '0.0.0.0/0'  # Dirección de destino para la ruta (tráfico hacia cualquier IP)
+      GatewayId: !Ref MyInternetGateway  # Referencia a la Internet Gateway creada
+
+  # Asociación de la tabla de rutas con la Subnet
+  MySubnetRouteTableAssociation:
+    Type: 'AWS::EC2::SubnetRouteTableAssociation'
+    Properties:
+      SubnetId: !Ref MySubnet  # Referencia a la Subnet creada
+      RouteTableId: !Ref MyRouteTable  # Referencia a la tabla de rutas creada
+
+  # Creación de un Security Group para la instancia EC2
+  MySecurityGroup:
+    Type: 'AWS::EC2::SecurityGroup'
+    Properties:
+      VpcId: !Ref MyVPC  # Referencia a la VPC creada
+      GroupDescription: Enable SSH access  # Descripción del Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22  # Puerto de inicio para el rango de puertos permitidos (SSH)
+          ToPort: 22  # Puerto de fin para el rango de puertos permitidos (SSH)
+          CidrIp: 0.0.0.0/0  # Permitir acceso desde cualquier IP
+
+  # Creación de un IAM Role para la instancia EC2
+  MyIAMRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      # Definición del documento de política de asunción de rol (AssumeRolePolicyDocument)
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'  # Versión del documento de política de IAM
+        Statement:  # Lista de declaraciones en la política
+          - Effect: Allow  # Efecto de la declaración: Allow (permitir)
+            Principal:
+              Service: 'ec2.amazonaws.com'  # Entidad principal que puede asumir el rol, en este caso, el servicio EC2
+            Action: 'sts:AssumeRole'  # Acción permitida: sts:AssumeRole (permite que EC2 asuma este rol)
+
+      Path: '/'  # Ruta dentro de la jerarquía de políticas de IAM. '/' indica la raíz.
+
+      # Definición de las políticas de IAM asociadas al rol
+      Policies:
+        - PolicyName: S3Access  # Nombre de la política de IAM
+          PolicyDocument:  # Documento de la política
+            Version: '2012-10-17'  # Versión del documento de política de IAM
+            Statement:  # Lista de declaraciones en la política
+              - Effect: Allow  # Efecto de la declaración: Allow (permitir)
+                Action:
+                  - 's3:*'  # Lista de acciones permitidas en el servicio S3. 's3:*' permite todas las acciones en S3.
+                Resource: '*'  # Recursos a los que se aplica la política. '*' indica todos los recursos de S3.
+
+  # Creación de un Instance Profile para la instancia EC2
+  MyInstanceProfile:
+    Type: 'AWS::IAM::InstanceProfile'
+    Properties:
+      Path: '/'
+      Roles:
+        - !Ref MyIAMRole  # Referencia al IAM Role creado
+
+  # Creación de la instancia EC2
+  MyEC2Instance:
+    Type: 'AWS::EC2::Instance'
+    Properties:
+      InstanceType: t2.micro  # Tipo de instancia (elegible para el nivel gratuito)
+      KeyName: clavelab16  # Nombre del par de claves para acceso SSH (reemplaza con tu propio par de claves)
+      SecurityGroupIds:
+        - !Ref MySecurityGroup  # Referencia al Security Group creado
+      SubnetId: !Ref MySubnet  # Referencia a la Subnet creada
+      IamInstanceProfile: !Ref MyInstanceProfile  # Referencia al Instance Profile creado
+      ImageId: ami-0c55b159cbfafe1f0  # ID de la AMI (imagen de máquina de Amazon) a utilizar (reemplaza con la AMI deseada)
+
+Outputs:
+  InstanceId:
+    Description: 'Instance ID of the newly created EC2 instance'
+    Value: !Ref MyEC2Instance  # Devuelve el ID de la instancia EC2 creada
+  PublicIP:
+    Description: 'Public IP address of the newly created EC2 instance'
+    Value: !GetAtt MyEC2Instance.PublicIp  # Devuelve la dirección IP pública de la instancia EC2 creada
+  VPCId:
+    Description: 'VPC ID'
+    Value: !Ref MyVPC  # Devuelve el ID de la VPC creada
